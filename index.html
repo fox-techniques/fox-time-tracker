@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title> FOX Time Tracker </title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="title">
+      <h1>FOX Time Tracker</h1>
+      <div class="status" id="status">...</div>
+    </div>
+
+    <div class="grid">
+      <!-- Controls / Projects -->
+      <div class="card">
+        <div class="row" style="margin-bottom:10px">
+          <select id="projectSelect" title="Choose project"></select>
+          <input id="newProject" placeholder="New project name…" />
+          <button class="btn-primary" id="addProjectBtn">Add / Select</button>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <button id="startBtn" class="btn-ok">Start</button>
+          <button id="stopBtn">Stop</button>
+          <button id="resetActiveBtn" class="btn-danger">Reset (this week)</button>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <button id="exportWeekBtn">Export week (CSV)</button>
+          <span class="muted" id="weekRange"></span>
+        </div>
+        <div class="list" id="projectList"></div>
+      </div>
+
+      <!-- Summary + Day timer -->
+      <div class="card">
+        <div class="totals" style="margin-bottom:12px">
+          <div class="stat">
+            <div class="label">Now</div>
+            <div class="val" id="nowTimer">00:00:00</div>
+            <div class="muted" id="nowProject">—</div>
+          </div>
+          <div class="stat">
+            <div class="label">Today (projects)</div>
+            <div class="val" id="todayTotal">00:00:00</div>
+            <div class="muted" id="todayDate">—</div>
+          </div>
+        </div>
+
+        <div class="stat">
+          <div class="label">This week (projects)</div>
+          <div class="val" id="weekTotal">00:00:00</div>
+        </div>
+
+        <div class="stat" style="margin-top:12px">
+          <div class="label">Day timer (Check In / Check Out)</div>
+          <div class="val" id="dayTimer">00:00:00</div>
+          <div class="day-controls">
+            <button id="dayInBtn" class="btn-day-in">Check In</button>
+            <button id="dayOutBtn" class="btn-day-out">Check Out</button>
+            <span class="muted" id="dayStatus">Not checked in</span>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <span class="danger-link" id="resetAll">Reset all data</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom banner -->
+  <div class="banner">
+    <div id="bannerText" class="scroll-text"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

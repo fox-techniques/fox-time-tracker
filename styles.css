@@ -1,0 +1,253 @@
+:root {
+  --bg:#0f1115;
+  --panel:#1a1d24;
+  --muted:#8b92a6;
+  --fg:#e9edf1;
+  --accent:#5aa9ff;
+  --accent2:#7bd389;
+  --danger:#ff6767;
+  --radius:14px;
+  --banner-h:50px;
+  --speed:25s;
+  --orange:#ff9800;
+  --orange-border:#c56f00;
+  --orange-text:#231400;
+}
+
+* {
+  box-sizing:border-box;
+}
+
+html, body{ 
+  height:100%
+}
+
+body {
+  margin:0;
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Helvetica,Arial,sans-serif;
+  color:var(--fg);
+  background:linear-gradient(180deg,#0d0f13,#12151b 40%, #0f1115);
+  padding-bottom: var(--banner-h);
+}
+
+/* ======= App UI ======= */
+.wrap {
+    max-width:960px;
+    margin:16px auto 24px;
+    padding:16px
+}
+
+.title {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin:8px 0 12px
+}
+
+h1 { 
+  font-size:20px;
+  margin:0;
+}
+
+.status { 
+  color:var(--muted);
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:1.2fr 1fr;
+  gap:16px;
+}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+
+.card{ 
+  background:var(--panel);
+  border:1px solid #202633;
+  border-radius:var(--radius);
+  box-shadow:0 8px 24px rgba(0,0,0,.25);
+  padding:16px;
+}
+
+.row { 
+  display:flex;
+  align-items: center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+input,select,button {
+  background:#161a22;
+  color:var(--fg);
+  border:1px solid #2b3242;
+  border-radius:10px;
+  padding:10px 12px;
+}
+
+input:focus,select:focus,button:focus { 
+  outline:2px solid #2d3b53;
+}
+
+button { 
+  cursor:pointer;
+}
+
+.btn-primary { 
+  background:var(--accent);
+  border-color:#2f6db3;
+  color:#041627;
+}
+
+.btn-ok { 
+  background:var(--accent2);
+  border-color:#2f6d48;
+  color:#062013;
+}
+
+.btn-danger { 
+  background:var(--danger);
+  border-color:#a23a3a;
+  color:#2a0a0a;
+}
+
+.btn-done { 
+  background:var(--orange);
+  border:1px solid var(--orange-border);
+  color:var(--orange-text);
+  font-weight:700;
+}
+
+.btn-undone { 
+  background:#202633;
+  border:1px solid var(--orange-border);
+  color:var(--orange);
+  font-weight:700;
+}
+
+.list { 
+  margin:8px 0 0;
+  border-top:1px dashed #2a3142;
+}
+
+.project { 
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:10px 0;
+  border-bottom:1px dashed #2a3142;
+  gap:10px;
+}
+
+.project:last-child { 
+  border-bottom:0; 
+}
+
+.pname { 
+  font-weight:600;
+}
+
+.muted { 
+  color:var(--muted);
+}
+
+.totals { 
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:12px;
+}
+
+@media (max-width:600px){.totals{grid-template-columns:1fr}}
+
+.stat { 
+  background:#121621;
+  border:1px solid #232a3a;
+  border-radius:12px;
+  padding:12px;
+}
+
+.stat .label { 
+  font-size:14px;
+  color:var(--muted);
+}
+
+.stat .val { 
+  font-size:20px;
+  font-weight:700;
+  margin-top:4px;
+}
+
+.danger-link { 
+  color:#ff8e8e;
+  cursor:pointer;
+}
+
+/* Day timer controls */
+.day-controls { 
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+  margin-top:8px;
+}
+
+.btn-day-in {
+  background:#7bd389;
+  border:1px solid #2f6d48;
+  color:#062013;
+  font-weight:700;
+}
+
+.btn-day-out {
+  background:#ffd166;
+  border:1px solid #be9a32;
+  color:#3a2500;
+  font-weight:700;
+}
+
+/* ======= Bottom banner (edge-to-edge, pauses on hover) ======= */
+.banner {
+  position:fixed;
+  bottom:0;
+  left:0;
+  width:100%;
+  height:var(--banner-h);
+  background:rgba(0,0,0,0.6);
+  display:flex;
+  align-items:center;
+  overflow:hidden;
+  z-index:30;
+}
+
+.banner:hover .scroll-text { 
+  animation-play-state: paused;
+}
+
+.scroll-text {
+  white-space:nowrap;
+  display:inline-block;
+  padding-left:100%;
+  animation:ticker var(--speed) linear infinite;
+  font-size: 16px;
+  font-weight:700;
+  width:max-content;
+}
+
+@keyframes ticker{ 0%{transform:translateX(0);} 100%{transform:translateX(-100%);} }
+
+/* Per-project coloring inside the banner */
+.proj.running { 
+  color:#00d084;
+}     /* green while running */
+
+.proj.done { 
+  color:#ff9800;
+}        /* orange when done   */
+
+.proj.notrunning { 
+  color:#ff6363;
+}  /* red when stopped   */
+
+.sep{ 
+  color:#9aa1b7;
+  opacity:.75;
+  padding:0 12px;
+}
