@@ -7,6 +7,8 @@ const DONE_KEY='tt.done';            // array of done project names
 const DAY_ACTIVE_KEY='tt.dayActive'; // day timer active
 const DAY_SESS_KEY='tt.daySessions'; // day sessions [{start,end}]
 const LAST_EXPORT_KEY='tt.lastExportWeekStart';
+const DAY_MS=24*60*60*1000;
+const EIGHT_HOURS_MS=8*60*60*1000;
 
 const $=(id)=>document.getElementById(id);
 const el={
@@ -31,6 +33,7 @@ function fmtDuration(ms){
   return `${hh}:${mm}:${ss}`;
 }
 function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+function startOfDay(ms){ const d=new Date(ms); d.setHours(0,0,0,0); return d.getTime(); }
 function endOfToday(){ const d=new Date(); d.setHours(23,59,59,999); return d.getTime(); }
 function startOfWeekMonday(){ const d=new Date(); const day=(d.getDay()+6)%7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day); return d.getTime(); }
 function endOfWeekMonday(){ const s=startOfWeekMonday(); return s + 7*24*3600*1000 - 1; }
@@ -39,6 +42,14 @@ function formatDateRange(ms1,ms2){
   return `${f(ms1)} - ${f(ms2)}`;
 }
 function formatDateShort(ms){ return new Date(ms).toLocaleDateString(undefined,{year:'numeric',month:'2-digit',day:'2-digit'}); }
+function formatTime(ms){ return new Date(ms).toLocaleTimeString(); }
+function isoWeekInfo(ms){
+  const d=new Date(ms); d.setHours(0,0,0,0);
+  d.setDate(d.getDate() + 3 - ((d.getDay()+6)%7)); // shift to Thursday
+  const week1=new Date(d.getFullYear(),0,4);
+  const week=1 + Math.round(((d - week1)/DAY_MS - 3 + ((week1.getDay()+6)%7))/7);
+  return {week, year:d.getFullYear()};
+}
 
 function getData(){ return {
   projects: load(PROJ_KEY,['General']),
@@ -59,6 +70,7 @@ function addProject(name){
 function startTimer(project){
   const d=getData();
   if(d.active){ if(d.active.project===project) return; stopTimer(); }
+  if(!load(DAY_ACTIVE_KEY,null)) dayCheckIn(); // auto check-in if not already
   setActive({project, startEpochMs:Date.now()}); render();
 }
 function stopTimer(){
@@ -89,6 +101,27 @@ function sessionsInRange(from,to){
 function sumByProject(s){
   const m=new Map(); for(const x of s){ m.set(x.project,(m.get(x.project)||0)+(x.end-x.start)); } return m;
 }
+function splitSessionByDay(sess){
+  const parts=[];
+  let start=sess.start;
+  const end=sess.end;
+  while(start<=end){
+    const day=startOfDay(start);
+    const dayEnd=day+DAY_MS-1;
+    const segEnd=Math.min(end,dayEnd);
+    parts.push({...sess,start,end:segEnd,day});
+    start=segEnd+1;
+  }
+  return parts;
+}
+function dailyTotals(segments){
+  const map=new Map();
+  for(const seg of segments){
+    const day=seg.day ?? startOfDay(seg.start);
+    map.set(day,(map.get(day)||0)+(seg.end-seg.start));
+  }
+  return map;
+}
 
 /* ========= Day timer helpers ========= */
 function dayCheckIn(){
@@ -98,13 +131,15 @@ function dayCheckIn(){
   render();
 }
 function dayCheckOut(){
+  stopTimer(); // ensure all projects end when checking out
   const dayActive = load(DAY_ACTIVE_KEY,null);
-  if(!dayActive) return;
+  if(!dayActive){ render(); return; }
   const now = Date.now();
   const arr = load(DAY_SESS_KEY,[]);
   arr.push({start: dayActive.startEpochMs, end: now});
   save(DAY_SESS_KEY, arr);
   localStorage.removeItem(DAY_ACTIVE_KEY);
+  stopTimer(); // end any running project when clocking out for the day
   render();
 }
 function daySessionsToday(){
@@ -126,12 +161,47 @@ function dayTotalMsNow(){
 /* ========= Export ========= */
 function exportCSVForRange(from,to, filename){
   const sessions=sessionsInRange(from,to);
-  const rows=[['Project','Start','End','Duration (hh:mm:ss)']];
-  for(const s of sessions){
-    rows.push([ s.project, new Date(s.start).toLocaleString(), new Date(s.end).toLocaleString(), fmtDuration(s.end - s.start) ]);
+  const segments=sessions.flatMap(splitSessionByDay).sort((a,b)=>a.start-b.start);
+  const dayTotalsMap=dailyTotals(segments);
+  const projectTotals=sumByProject(sessions);
+
+  const rows=[['Date','Project','Start','End','Duration (hh:mm:ss)','Day total','Overtime?','Overtime (hh:mm:ss)']];
+  for(const seg of segments){
+    const dayTotal=dayTotalsMap.get(seg.day)||0;
+    const overtimeMs=Math.max(0, dayTotal - EIGHT_HOURS_MS);
+    rows.push([
+      formatDateShort(seg.day),
+      seg.project,
+      formatTime(seg.start),
+      formatTime(seg.end),
+      fmtDuration(seg.end - seg.start),
+      fmtDuration(dayTotal),
+      overtimeMs>0?'Yes':'No',
+      fmtDuration(overtimeMs)
+    ]);
   }
-  rows.push([]); rows.push(['Totals','','','']);
-  for(const [p,ms] of sumByProject(sessions).entries()){ rows.push([p,'','',fmtDuration(ms)]); }
+
+  rows.push([]);
+  rows.push(['Daily totals']);
+  rows.push(['Date','Total (hh:mm:ss)','Overtime?','Overtime (hh:mm:ss)']);
+  for(const day of [...dayTotalsMap.keys()].sort((a,b)=>a-b)){
+    const total=dayTotalsMap.get(day);
+    const overtimeMs=Math.max(0, total - EIGHT_HOURS_MS);
+    rows.push([
+      formatDateShort(day),
+      fmtDuration(total),
+      overtimeMs>0?'Yes':'No',
+      fmtDuration(overtimeMs)
+    ]);
+  }
+
+  rows.push([]);
+  rows.push(['Project totals']);
+  rows.push(['Project','Total (hh:mm:ss)']);
+  for(const [p,ms] of projectTotals.entries()){
+    rows.push([p, fmtDuration(ms)]);
+  }
+
   const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
@@ -186,7 +256,8 @@ function render(){
   if(!el.projectSelect.value && projects.length) el.projectSelect.value=projects[0];
 
   // Week label
-  el.weekRange.textContent = 'Week: ' + formatDateRange(startOfWeekMonday(), endOfWeekMonday());
+  const weekInfo = isoWeekInfo(startOfWeekMonday());
+  el.weekRange.textContent = `Week ${weekInfo.week} (${weekInfo.year}): ${formatDateRange(startOfWeekMonday(), endOfWeekMonday())}`;
 
   // Per-project list (this week)
   const weekSessions=sessionsInRange(startOfWeekMonday(), endOfWeekMonday());
