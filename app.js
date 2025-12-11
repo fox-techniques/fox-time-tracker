@@ -122,17 +122,78 @@ function dailyTotals(segments){
   }
   return map;
 }
+function projectTotalsWithOvertime(segments){
+  // Break down normal vs overtime per project, allocating overtime proportionally per day.
+  const perDay=new Map(); // day -> Map(project, ms)
+  for(const seg of segments){
+    const day=seg.day ?? startOfDay(seg.start);
+    const m=perDay.get(day) || new Map();
+    m.set(seg.project,(m.get(seg.project)||0)+(seg.end-seg.start));
+    perDay.set(day,m);
+  }
+
+  const totals=new Map(); // project -> {normal, overtime}
+  for(const [day,map] of perDay.entries()){
+    const dayTotal=[...map.values()].reduce((a,b)=>a+b,0);
+    const dayOver=Math.max(0, dayTotal - EIGHT_HOURS_MS);
+    const factor=dayTotal>0 ? dayOver/dayTotal : 0;
+    for(const [project,ms] of map.entries()){
+      const overtime=ms*factor;
+      const normal=ms-overtime;
+      const agg=totals.get(project)||{normal:0,overtime:0};
+      agg.normal+=normal; agg.overtime+=overtime;
+      totals.set(project, agg);
+    }
+  }
+  return totals;
+}
+function dailyProjectTotalsWithOvertime(segments){
+  const perDay=new Map(); // day -> Map(project, ms)
+  for(const seg of segments){
+    const day=seg.day ?? startOfDay(seg.start);
+    const m=perDay.get(day) || new Map();
+    m.set(seg.project,(m.get(seg.project)||0)+(seg.end-seg.start));
+    perDay.set(day,m);
+  }
+
+  const rows=[];
+  for(const [day,map] of perDay.entries()){
+    const dayTotal=[...map.values()].reduce((a,b)=>a+b,0);
+    const dayOver=Math.max(0, dayTotal - EIGHT_HOURS_MS);
+    const factor=dayTotal>0 ? dayOver/dayTotal : 0;
+    for(const [project,ms] of map.entries()){
+      const overtime=ms*factor;
+      const normal=ms-overtime;
+      rows.push({day, project, normal, overtime});
+    }
+  }
+  return rows;
+}
 
 /* ========= Day timer helpers ========= */
-function dayCheckIn(){
+function normalizeDayActive(){
   const dayActive = load(DAY_ACTIVE_KEY,null);
+  const todayStart = startOfToday();
+  if(!dayActive || typeof dayActive.startEpochMs !== 'number') return null;
+  if(dayActive.startEpochMs < todayStart){
+    const arr = load(DAY_SESS_KEY,[]);
+    arr.push({start: dayActive.startEpochMs, end: todayStart - 1});
+    save(DAY_SESS_KEY, arr);
+    const updated = {startEpochMs: todayStart};
+    save(DAY_ACTIVE_KEY, updated);
+    return updated;
+  }
+  return dayActive;
+}
+function dayCheckIn(){
+  const dayActive = normalizeDayActive();
   if(dayActive) return;
   save(DAY_ACTIVE_KEY,{startEpochMs: Date.now()});
   render();
 }
 function dayCheckOut(){
   stopTimer(); // ensure all projects end when checking out
-  const dayActive = load(DAY_ACTIVE_KEY,null);
+  const dayActive = normalizeDayActive();
   if(!dayActive){ render(); return; }
   const now = Date.now();
   const arr = load(DAY_SESS_KEY,[]);
@@ -150,11 +211,15 @@ function daySessionsToday(){
     return (e1>=s1)?[{start:s1,end:e1}]:[];
   });
 }
-function dayTotalMsNow(){
+function dayTotalMsNow(activeOverride){
+  const todayStart = startOfToday();
   const sessions = daySessionsToday();
   let ms = sessions.reduce((a,s)=>a+(s.end-s.start),0);
-  const active = load(DAY_ACTIVE_KEY,null);
-  if(active && active.startEpochMs >= startOfToday()) ms += (Date.now() - active.startEpochMs);
+  const active = activeOverride ?? normalizeDayActive();
+  if(active){
+    const activeStart = Math.max(active.startEpochMs, todayStart);
+    ms += (Date.now() - activeStart);
+  }
   return ms;
 }
 
@@ -164,6 +229,8 @@ function exportCSVForRange(from,to, filename){
   const segments=sessions.flatMap(splitSessionByDay).sort((a,b)=>a.start-b.start);
   const dayTotalsMap=dailyTotals(segments);
   const projectTotals=sumByProject(sessions);
+  const projectTotalsOT=projectTotalsWithOvertime(segments);
+  const dailyProjectTotals=dailyProjectTotalsWithOvertime(segments);
 
   const rows=[['Date','Project','Start','End','Duration (hh:mm:ss)','Day total','Overtime?','Overtime (hh:mm:ss)']];
   for(const seg of segments){
@@ -182,24 +249,31 @@ function exportCSVForRange(from,to, filename){
   }
 
   rows.push([]);
-  rows.push(['Daily totals']);
-  rows.push(['Date','Total (hh:mm:ss)','Overtime?','Overtime (hh:mm:ss)']);
-  for(const day of [...dayTotalsMap.keys()].sort((a,b)=>a-b)){
-    const total=dayTotalsMap.get(day);
-    const overtimeMs=Math.max(0, total - EIGHT_HOURS_MS);
+  rows.push(['Daily totals T/O']);
+  rows.push(['Date','Project','Time (hh:mm:ss)','Overtime (hh:mm:ss)']);
+  for(const item of dailyProjectTotals.sort((a,b)=> a.day===b.day ? a.project.localeCompare(b.project) : a.day-b.day)){
+    const total=item.normal + item.overtime;
     rows.push([
-      formatDateShort(day),
+      formatDateShort(item.day),
+      item.project,
       fmtDuration(total),
-      overtimeMs>0?'Yes':'No',
-      fmtDuration(overtimeMs)
+      fmtDuration(item.overtime)
     ]);
   }
 
   rows.push([]);
-  rows.push(['Project totals']);
+  rows.push(['Project totals T/O']);
+  rows.push(['Project','Time (hh:mm:ss)','Overtime (hh:mm:ss)']);
+  for(const p of [...projectTotals.keys()].sort((a,b)=>a.localeCompare(b))){
+    const totals = projectTotalsOT.get(p) || {normal:0,overtime:0};
+    rows.push([p, fmtDuration(totals.normal), fmtDuration(totals.overtime)]);
+  }
+
+  rows.push([]);
+  rows.push(['Project totals (sum)']);
   rows.push(['Project','Total (hh:mm:ss)']);
-  for(const [p,ms] of projectTotals.entries()){
-    rows.push([p, fmtDuration(ms)]);
+  for(const p of [...projectTotals.keys()].sort((a,b)=>a.localeCompare(b))){
+    rows.push([p, fmtDuration(projectTotals.get(p)||0)]);
   }
 
   const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
@@ -303,8 +377,8 @@ function render(){
   el.weekTotal.textContent=fmtDuration(weekMs);
 
   // Day timer panel
-  const dayAct = load(DAY_ACTIVE_KEY,null);
-  const dayMs = dayTotalMsNow();
+  const dayAct = normalizeDayActive();
+  const dayMs = dayTotalMsNow(dayAct);
   el.dayTimer.textContent = fmtDuration(dayMs);
   el.dayStatus.textContent = dayAct ? 'Checked in' : 'Not checked in';
 
@@ -317,7 +391,8 @@ setInterval(()=>{
   const a=load(ACTIVE_KEY,null);
   el.nowTimer.textContent = a ? fmtDuration(Date.now()-a.startEpochMs) : '00:00:00';
   // day timer tick
-  el.dayTimer.textContent = fmtDuration(dayTotalMsNow());
+  const dayAct = normalizeDayActive();
+  el.dayTimer.textContent = fmtDuration(dayTotalMsNow(dayAct));
   render();
 },1000);
 
