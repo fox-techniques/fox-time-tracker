@@ -7,8 +7,15 @@ const DONE_KEY='tt.done';            // array of done project names
 const DAY_ACTIVE_KEY='tt.dayActive'; // day timer active
 const DAY_SESS_KEY='tt.daySessions'; // day sessions [{start,end}]
 const LAST_EXPORT_KEY='tt.lastExportWeekStart';
+const LAST_ACTIVITY_KEY='tt.lastActivityMs';
+const LAST_AUTO_CHECKOUT_KEY='tt.lastAutoCheckoutMs';
+const OFF_DAYS_KEY='tt.offDays';
+const LAST_OFF_CHECK_KEY='tt.lastOffCheckDay';
 const DAY_MS=24*60*60*1000;
 const EIGHT_HOURS_MS=8*60*60*1000;
+const BUSINESS_START_HOUR=8;
+const BUSINESS_END_HOUR=18;
+const AFTER_HOURS_IDLE_MS=60*60*1000;
 
 const $=(id)=>document.getElementById(id);
 const el={
@@ -60,8 +67,52 @@ function getData(){ return {
   daySess:  load(DAY_SESS_KEY,[])
 };}
 
+/* ========= Activity & time helpers ========= */
+function getLastActivityMs(){
+  const v=load(LAST_ACTIVITY_KEY,null);
+  return (typeof v==='number' && !Number.isNaN(v)) ? v : Date.now();
+}
+let lastActivityCache=getLastActivityMs();
+function touchActivity(ms){
+  const t=ms ?? Date.now();
+  if(t - lastActivityCache >= 5000){ save(LAST_ACTIVITY_KEY,t); }
+  lastActivityCache=t;
+  return t;
+}
+function isBusinessHours(ms){
+  const h=new Date(ms).getHours();
+  return h>=BUSINESS_START_HOUR && h<BUSINESS_END_HOUR;
+}
+function markDayOffIfNoSessions(dayStart){
+  const arr = load(DAY_SESS_KEY,[]);
+  const dayEnd = dayStart + DAY_MS - 1;
+  const hadSession = arr.some(s=> !(s.end<dayStart || s.start>dayEnd));
+  if(hadSession) return false;
+  const offDays = load(OFF_DAYS_KEY,[]);
+  if(!offDays.includes(dayStart)){
+    offDays.push(dayStart);
+    save(OFF_DAYS_KEY, offDays);
+  }
+  return true;
+}
+function maybeMarkPreviousDayOff(){
+  const today = startOfToday();
+  const lastChecked = load(LAST_OFF_CHECK_KEY,null);
+  if(lastChecked === today) return;
+  const yesterday = today - DAY_MS;
+  if(yesterday >= 0){
+    markDayOffIfNoSessions(yesterday);
+  }
+  save(LAST_OFF_CHECK_KEY, today);
+}
+
 /* ========= Project-level helpers ========= */
 function setActive(a){ if(a) save(ACTIVE_KEY,a); else localStorage.removeItem(ACTIVE_KEY); }
+function ensureProject(name){
+  if(!name) return;
+  const list=load(PROJ_KEY,['General']);
+  if(!list.includes(name)){ list.push(name); save(PROJ_KEY,list); }
+}
 function addProject(name){
   const d=getData(); if(!name) return;
   if(!d.projects.includes(name)){ d.projects.push(name); save(PROJ_KEY,d.projects); }
@@ -70,15 +121,33 @@ function addProject(name){
 function startTimer(project){
   const d=getData();
   if(d.active){ if(d.active.project===project) return; stopTimer(); }
-  if(!load(DAY_ACTIVE_KEY,null)) dayCheckIn(); // auto check-in if not already
+  if(!load(DAY_ACTIVE_KEY,null)) dayCheckIn({skipAutoProjectStart:true}); // auto check-in if not already
+  ensureProject(project);
+  touchActivity();
   setActive({project, startEpochMs:Date.now()}); render();
 }
 function stopTimer(){
+  stopActiveAt(Date.now());
+}
+function stopActiveAt(endMs,{skipRender=false}={}){
   const d=getData(); if(!d.active) return;
-  const now=Date.now();
-  const sess={project:d.active.project,start:d.active.startEpochMs,end:now};
+  const safeEnd=Math.max(endMs, d.active.startEpochMs);
+  const sess={project:d.active.project,start:d.active.startEpochMs,end:safeEnd};
   const arr=load(SESS_KEY,[]); arr.push(sess); save(SESS_KEY,arr);
-  setActive(null); render();
+  setActive(null);
+  if(!skipRender) render();
+}
+function stopAllAt(endMs){
+  stopActiveAt(endMs,{skipRender:true});
+  const dayActive = normalizeDayActive();
+  if(dayActive){
+    const safeEnd=Math.max(endMs, dayActive.startEpochMs);
+    const arr = load(DAY_SESS_KEY,[]);
+    arr.push({start: dayActive.startEpochMs, end: safeEnd});
+    save(DAY_SESS_KEY, arr);
+    localStorage.removeItem(DAY_ACTIVE_KEY);
+  }
+  render();
 }
 function markDone(project){
   const d=getData();
@@ -185,23 +254,23 @@ function normalizeDayActive(){
   }
   return dayActive;
 }
-function dayCheckIn(){
+function dayCheckIn({skipAutoProjectStart=false}={}){
   const dayActive = normalizeDayActive();
-  if(dayActive) return;
-  save(DAY_ACTIVE_KEY,{startEpochMs: Date.now()});
+  if(dayActive) return dayActive;
+  const now = Date.now();
+  save(DAY_ACTIVE_KEY,{startEpochMs: now});
+  touchActivity(now);
+  if(!skipAutoProjectStart && !load(ACTIVE_KEY,null)){
+    ensureProject('General');
+    startTimer('General');
+    return;
+  }
   render();
 }
-function dayCheckOut(){
-  stopTimer(); // ensure all projects end when checking out
-  const dayActive = normalizeDayActive();
-  if(!dayActive){ render(); return; }
-  const now = Date.now();
-  const arr = load(DAY_SESS_KEY,[]);
-  arr.push({start: dayActive.startEpochMs, end: now});
-  save(DAY_SESS_KEY, arr);
-  localStorage.removeItem(DAY_ACTIVE_KEY);
-  stopTimer(); // end any running project when clocking out for the day
-  render();
+function dayCheckOut(endOverrideMs){
+  const endMs = typeof endOverrideMs==='number' ? endOverrideMs : Date.now();
+  stopAllAt(endMs);
+  touchActivity(endMs);
 }
 function daySessionsToday(){
   const from = startOfToday(), to = endOfToday();
@@ -221,6 +290,20 @@ function dayTotalMsNow(activeOverride){
     ms += (Date.now() - activeStart);
   }
   return ms;
+}
+function maybeAfterHoursAutoCheckout(){
+  const dayActive = normalizeDayActive();
+  const active = load(ACTIVE_KEY,null);
+  if(!dayActive && !active) return; // nothing running
+  const now = Date.now();
+  if(isBusinessHours(now)) return;
+  const lastAct = getLastActivityMs();
+  if(now - lastAct < AFTER_HOURS_IDLE_MS) return;
+  const lastAuto = load(LAST_AUTO_CHECKOUT_KEY,null);
+  if(lastAuto && startOfDay(lastAuto) === startOfDay(now)) return; // already handled today
+  const cutoff = Math.max(lastAct, dayActive?.startEpochMs ?? 0, active?.startEpochMs ?? 0);
+  stopAllAt(cutoff);
+  save(LAST_AUTO_CHECKOUT_KEY, now);
 }
 
 /* ========= Export ========= */
@@ -448,8 +531,21 @@ el.projectList.addEventListener('click',(e)=>{
 el.dayInBtn.addEventListener('click', dayCheckIn);
 el.dayOutBtn.addEventListener('click', dayCheckOut);
 
+/* Activity tracking */
+['mousemove','keydown','click'].forEach(evt=>{
+  document.addEventListener(evt, ()=>touchActivity());
+});
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden) touchActivity();
+});
+window.addEventListener('focus', ()=>touchActivity());
+touchActivity(getLastActivityMs()); // seed cached activity
+maybeMarkPreviousDayOff();
+
 /* Auto-export weekly rollover */
 setInterval(maybeAutoExport, 60*1000);
+setInterval(maybeAfterHoursAutoCheckout, 60*1000);
+setInterval(maybeMarkPreviousDayOff, 60*60*1000);
 maybeAutoExport();
 
 /* Initial render */
