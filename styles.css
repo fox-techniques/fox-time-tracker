@@ -84,6 +84,10 @@ input,select,button {
   padding:10px 12px;
 }
 
+.mins-input {
+  width: 110px;
+}
+
 input:focus,select:focus,button:focus { 
   outline:2px solid #2d3b53;
 }
@@ -150,6 +154,23 @@ button {
 
 .pname { 
   font-weight:600;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.project-meta {
+  flex:1;
+  min-width:0;
+}
+
+.project .row {
+  flex-wrap:nowrap;
+  flex-shrink:0;
+}
+
+.project .row button {
+  white-space:nowrap;
 }
 
 .muted { 

@@ -11,6 +11,7 @@ const LAST_ACTIVITY_KEY='tt.lastActivityMs';
 const LAST_AUTO_CHECKOUT_KEY='tt.lastAutoCheckoutMs';
 const OFF_DAYS_KEY='tt.offDays';
 const LAST_OFF_CHECK_KEY='tt.lastOffCheckDay';
+const CORR_KEY='tt.corrections';     // manual corrections [{project,day,deltaMs,at}]
 const DAY_MS=24*60*60*1000;
 const EIGHT_HOURS_MS=8*60*60*1000;
 const BUSINESS_START_HOUR=8;
@@ -20,7 +21,10 @@ const AFTER_HOURS_IDLE_MS=60*60*1000;
 const $=(id)=>document.getElementById(id);
 const el={
   projectSelect:$('projectSelect'), newProject:$('newProject'),
-  addProjectBtn:$('addProjectBtn'), startBtn:$('startBtn'), stopBtn:$('stopBtn'),
+  addProjectBtn:$('addProjectBtn'), renameProjectBtn:$('renameProjectBtn'),
+  adjustStep:$('adjustStep'), adjustMinus:$('adjustMinus'), adjustPlus:$('adjustPlus'),
+  customMinutes:$('customMinutes'), customMinus:$('customMinus'), customPlus:$('customPlus'),
+  startBtn:$('startBtn'), stopBtn:$('stopBtn'),
   resetActiveBtn:$('resetActiveBtn'), exportWeekBtn:$('exportWeekBtn'),
   projectList:$('projectList'), status:$('status'), weekRange:$('weekRange'),
   nowTimer:$('nowTimer'), nowProject:$('nowProject'), todayTotal:$('todayTotal'),
@@ -33,11 +37,16 @@ function load(k,d){ try{ return JSON.parse(localStorage.getItem(k)) ?? d }catch{
 function save(k,v){ localStorage.setItem(k, JSON.stringify(v)) }
 
 function fmtDuration(ms){
-  const s=Math.floor(ms/1000);
+  const safe=Math.max(0, ms);
+  const s=Math.floor(safe/1000);
   const hh=String(Math.floor(s/3600)).padStart(2,'0');
   const mm=String(Math.floor((s%3600)/60)).padStart(2,'0');
   const ss=String(s%60).padStart(2,'0');
   return `${hh}:${mm}:${ss}`;
+}
+function fmtSignedDuration(ms){
+  const sign=ms<0?'-':'';
+  return `${sign}${fmtDuration(Math.abs(ms))}`;
 }
 function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
 function startOfDay(ms){ const d=new Date(ms); d.setHours(0,0,0,0); return d.getTime(); }
@@ -64,7 +73,8 @@ function getData(){ return {
   active:   load(ACTIVE_KEY,null),
   done:     new Set(load(DONE_KEY,[])),
   dayActive:load(DAY_ACTIVE_KEY,null),
-  daySess:  load(DAY_SESS_KEY,[])
+  daySess:  load(DAY_SESS_KEY,[]),
+  corrections: load(CORR_KEY,[])
 };}
 
 /* ========= Activity & time helpers ========= */
@@ -117,6 +127,82 @@ function addProject(name){
   const d=getData(); if(!name) return;
   if(!d.projects.includes(name)){ d.projects.push(name); save(PROJ_KEY,d.projects); }
   render(); el.projectSelect.value=name;
+}
+function getProjectForAdjustment(){
+  const typed=el.newProject.value.trim();
+  if(typed){
+    addProject(typed);
+    el.newProject.value='';
+    return typed;
+  }
+  const selected=el.projectSelect.value;
+  if(selected){
+    ensureProject(selected);
+    return selected;
+  }
+  ensureProject('General');
+  return 'General';
+}
+function addCorrection(project,deltaMs,dayOverride){
+  const name=String(project ?? '').trim();
+  if(!name || !deltaMs) return;
+  ensureProject(name);
+  const day=typeof dayOverride==='number' ? dayOverride : startOfToday();
+  const arr=load(CORR_KEY,[]);
+  arr.push({project:name, day, deltaMs, at:Date.now()});
+  save(CORR_KEY,arr);
+  render();
+}
+function correctionsInRange(from,to){
+  const arr=load(CORR_KEY,[]);
+  return arr.filter(c=>c.day>=from && c.day<=to);
+}
+function applyCorrectionsToTotals(totals, corrections){
+  for(const c of corrections){
+    totals.set(c.project,(totals.get(c.project)||0)+c.deltaMs);
+  }
+  return totals;
+}
+function applyCorrectionsToPerDay(perDay, corrections){
+  for(const c of corrections){
+    const m=perDay.get(c.day) || new Map();
+    m.set(c.project,(m.get(c.project)||0)+c.deltaMs);
+    perDay.set(c.day,m);
+  }
+  return perDay;
+}
+function renameProject(oldName,newName){
+  const from = String(oldName ?? '').trim();
+  const to = String(newName ?? '').trim();
+  if(!from || !to || from===to) return;
+
+  const projects = load(PROJ_KEY,['General']);
+  const exists = projects.includes(to);
+  if(exists && !confirm(`"${to}" already exists. Merge "${from}" into "${to}"?`)) return;
+
+  const nextProjects = projects.filter(p=>p!==from);
+  if(!nextProjects.includes(to)) nextProjects.push(to);
+  save(PROJ_KEY, nextProjects);
+
+  const sessions = load(SESS_KEY,[]).map(s=> s.project===from ? {...s, project: to} : s);
+  save(SESS_KEY, sessions);
+
+  const corrections = load(CORR_KEY,[]).map(c=> c.project===from ? {...c, project: to} : c);
+  save(CORR_KEY, corrections);
+
+  const active = load(ACTIVE_KEY,null);
+  if(active?.project===from){
+    save(ACTIVE_KEY,{...active, project: to});
+  }
+
+  const done = load(DONE_KEY,[]);
+  const isDone = done.includes(from) || done.includes(to);
+  const nextDone = done.filter(p=>p!==from);
+  if(isDone && !nextDone.includes(to)) nextDone.push(to);
+  save(DONE_KEY, nextDone);
+
+  render();
+  el.projectSelect.value = to;
 }
 function startTimer(project){
   const d=getData();
@@ -183,15 +269,18 @@ function splitSessionByDay(sess){
   }
   return parts;
 }
-function dailyTotals(segments){
+function dailyTotals(segments, corrections=[]){
   const map=new Map();
   for(const seg of segments){
     const day=seg.day ?? startOfDay(seg.start);
     map.set(day,(map.get(day)||0)+(seg.end-seg.start));
   }
+  for(const c of corrections){
+    map.set(c.day,(map.get(c.day)||0)+c.deltaMs);
+  }
   return map;
 }
-function projectTotalsWithOvertime(segments){
+function projectTotalsWithOvertime(segments, corrections=[]){
   // Break down normal vs overtime per project, allocating overtime proportionally per day.
   const perDay=new Map(); // day -> Map(project, ms)
   for(const seg of segments){
@@ -200,12 +289,14 @@ function projectTotalsWithOvertime(segments){
     m.set(seg.project,(m.get(seg.project)||0)+(seg.end-seg.start));
     perDay.set(day,m);
   }
+  applyCorrectionsToPerDay(perDay, corrections);
 
   const totals=new Map(); // project -> {normal, overtime}
   for(const [day,map] of perDay.entries()){
     const dayTotal=[...map.values()].reduce((a,b)=>a+b,0);
-    const dayOver=Math.max(0, dayTotal - EIGHT_HOURS_MS);
-    const factor=dayTotal>0 ? dayOver/dayTotal : 0;
+    const safeDayTotal=Math.max(0, dayTotal);
+    const dayOver=Math.max(0, safeDayTotal - EIGHT_HOURS_MS);
+    const factor=safeDayTotal>0 ? dayOver/safeDayTotal : 0;
     for(const [project,ms] of map.entries()){
       const overtime=ms*factor;
       const normal=ms-overtime;
@@ -216,7 +307,7 @@ function projectTotalsWithOvertime(segments){
   }
   return totals;
 }
-function dailyProjectTotalsWithOvertime(segments){
+function dailyProjectTotalsWithOvertime(segments, corrections=[]){
   const perDay=new Map(); // day -> Map(project, ms)
   for(const seg of segments){
     const day=seg.day ?? startOfDay(seg.start);
@@ -224,12 +315,14 @@ function dailyProjectTotalsWithOvertime(segments){
     m.set(seg.project,(m.get(seg.project)||0)+(seg.end-seg.start));
     perDay.set(day,m);
   }
+  applyCorrectionsToPerDay(perDay, corrections);
 
   const rows=[];
   for(const [day,map] of perDay.entries()){
     const dayTotal=[...map.values()].reduce((a,b)=>a+b,0);
-    const dayOver=Math.max(0, dayTotal - EIGHT_HOURS_MS);
-    const factor=dayTotal>0 ? dayOver/dayTotal : 0;
+    const safeDayTotal=Math.max(0, dayTotal);
+    const dayOver=Math.max(0, safeDayTotal - EIGHT_HOURS_MS);
+    const factor=safeDayTotal>0 ? dayOver/safeDayTotal : 0;
     for(const [project,ms] of map.entries()){
       const overtime=ms*factor;
       const normal=ms-overtime;
@@ -256,7 +349,13 @@ function normalizeDayActive(){
 }
 function dayCheckIn({skipAutoProjectStart=false}={}){
   const dayActive = normalizeDayActive();
-  if(dayActive) return dayActive;
+  if(dayActive){
+    if(!skipAutoProjectStart && !load(ACTIVE_KEY,null)){
+      ensureProject('General');
+      startTimer('General');
+    }
+    return dayActive;
+  }
   const now = Date.now();
   save(DAY_ACTIVE_KEY,{startEpochMs: now});
   touchActivity(now);
@@ -310,10 +409,12 @@ function maybeAfterHoursAutoCheckout(){
 function exportCSVForRange(from,to, filename){
   const sessions=sessionsInRange(from,to);
   const segments=sessions.flatMap(splitSessionByDay).sort((a,b)=>a.start-b.start);
-  const dayTotalsMap=dailyTotals(segments);
+  const corrections=correctionsInRange(from,to);
+  const dayTotalsMap=dailyTotals(segments, corrections);
   const projectTotals=sumByProject(sessions);
-  const projectTotalsOT=projectTotalsWithOvertime(segments);
-  const dailyProjectTotals=dailyProjectTotalsWithOvertime(segments);
+  applyCorrectionsToTotals(projectTotals, corrections);
+  const projectTotalsOT=projectTotalsWithOvertime(segments, corrections);
+  const dailyProjectTotals=dailyProjectTotalsWithOvertime(segments, corrections);
 
   const rows=[['Date','Project','Start','End','Duration (hh:mm:ss)','Day total','Overtime?','Overtime (hh:mm:ss)']];
   for(const seg of segments){
@@ -325,6 +426,20 @@ function exportCSVForRange(from,to, filename){
       formatTime(seg.start),
       formatTime(seg.end),
       fmtDuration(seg.end - seg.start),
+      fmtDuration(dayTotal),
+      overtimeMs>0?'Yes':'No',
+      fmtDuration(overtimeMs)
+    ]);
+  }
+  for(const c of corrections){
+    const dayTotal=dayTotalsMap.get(c.day)||0;
+    const overtimeMs=Math.max(0, dayTotal - EIGHT_HOURS_MS);
+    rows.push([
+      formatDateShort(c.day),
+      c.project,
+      'Correction',
+      '',
+      fmtSignedDuration(c.deltaMs),
       fmtDuration(dayTotal),
       overtimeMs>0?'Yes':'No',
       fmtDuration(overtimeMs)
@@ -379,10 +494,14 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g,m=>({ '&':'&amp;','<
 function buildBannerHTML(){
   const {projects, sessions, active, done} = getData();
   const now=Date.now();
-  const weekSessions=sessionsInRange(startOfWeekMonday(), endOfWeekMonday());
+  const weekStart=startOfWeekMonday();
+  const weekEnd=endOfWeekMonday();
+  const weekSessions=sessionsInRange(weekStart, weekEnd);
+  const weekCorrections=correctionsInRange(weekStart, weekEnd);
   const totals=sumByProject(weekSessions);
+  applyCorrectionsToTotals(totals, weekCorrections);
   if(active){
-    const extraFrom=Math.max(active.startEpochMs,startOfWeekMonday());
+    const extraFrom=Math.max(active.startEpochMs,weekStart);
     if(now>=extraFrom) totals.set(active.project,(totals.get(active.project)||0)+(now-extraFrom));
   }
   const names=[...new Set([...projects, ...totals.keys()])].sort((a,b)=>a.localeCompare(b));
@@ -417,10 +536,14 @@ function render(){
   el.weekRange.textContent = `Week ${weekInfo.week} (${weekInfo.year}): ${formatDateRange(startOfWeekMonday(), endOfWeekMonday())}`;
 
   // Per-project list (this week)
-  const weekSessions=sessionsInRange(startOfWeekMonday(), endOfWeekMonday());
+  const weekStart=startOfWeekMonday();
+  const weekEnd=endOfWeekMonday();
+  const weekSessions=sessionsInRange(weekStart, weekEnd);
+  const weekCorrections=correctionsInRange(weekStart, weekEnd);
   const totals=sumByProject(weekSessions);
+  applyCorrectionsToTotals(totals, weekCorrections);
   if(active){
-    const now=Date.now(), extraFrom=Math.max(active.startEpochMs,startOfWeekMonday());
+    const now=Date.now(), extraFrom=Math.max(active.startEpochMs,weekStart);
     if(now>=extraFrom) totals.set(active.project,(totals.get(active.project)||0)+(now-extraFrom));
   }
   const names=[...new Set([...projects, ...totals.keys()])].sort((a,b)=>a.localeCompare(b));
@@ -431,7 +554,7 @@ function render(){
     const esc=escapeHtml(name);
     return `
       <div class="project">
-        <div>
+        <div class="project-meta">
           <div class="pname">${esc} ${isActive?'<span class="muted">(running)</span>':''} ${isDone?'<span class="muted">(done)</span>':''}</div>
           <div class="muted">This week: ${fmtDuration(ms)}</div>
         </div>
@@ -450,9 +573,14 @@ function render(){
   else { el.status.textContent='Idle'; el.nowProject.textContent='—'; }
 
   // Today + week (projects)
-  const todaySessions=sessionsInRange(startOfToday(), endOfToday());
+  const todayStart=startOfToday();
+  const todayEnd=endOfToday();
+  const todaySessions=sessionsInRange(todayStart, todayEnd);
+  const todayCorrections=correctionsInRange(todayStart, todayEnd);
+  const todayCorrectionMs=todayCorrections.reduce((a,c)=>a+c.deltaMs,0);
   let todayMs=todaySessions.reduce((a,s)=>a+(s.end-s.start),0);
-  if(active && active.startEpochMs>=startOfToday()){ todayMs += (Date.now()-active.startEpochMs); }
+  if(active && active.startEpochMs>=todayStart){ todayMs += (Date.now()-active.startEpochMs); }
+  todayMs += todayCorrectionMs;
   el.todayTotal.textContent=fmtDuration(todayMs);
   el.todayDate.textContent=new Date().toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'});
 
@@ -487,7 +615,10 @@ function resetProjectWeek(p){
     if(!overlap) return true;
     return s.project!==p;
   });
-  save(SESS_KEY,kept); render();
+  save(SESS_KEY,kept);
+  const corr=load(CORR_KEY,[]).filter(c=> !(c.project===p && c.day>=from && c.day<=to));
+  save(CORR_KEY,corr);
+  render();
 }
 
 /* Buttons & delegation */
@@ -498,6 +629,37 @@ el.exportWeekBtn.addEventListener('click', ()=>{
 el.addProjectBtn.addEventListener('click', ()=>{
   const txt=el.newProject.value.trim();
   if(txt){ addProject(txt); el.newProject.value=''; } else if(el.projectSelect.value){ render(); }
+});
+el.renameProjectBtn.addEventListener('click', ()=>{
+  const from = el.projectSelect.value;
+  const to = el.newProject.value.trim();
+  if(!from || !to) return;
+  renameProject(from, to);
+  el.newProject.value='';
+});
+el.adjustMinus.addEventListener('click', ()=>{
+  const step=Number(el.adjustStep.value)||0;
+  if(!step) return;
+  const p=getProjectForAdjustment();
+  addCorrection(p, -step);
+});
+el.adjustPlus.addEventListener('click', ()=>{
+  const step=Number(el.adjustStep.value)||0;
+  if(!step) return;
+  const p=getProjectForAdjustment();
+  addCorrection(p, step);
+});
+el.customMinus.addEventListener('click', ()=>{
+  const mins=Number(el.customMinutes.value)||0;
+  if(mins<=0) return;
+  const p=getProjectForAdjustment();
+  addCorrection(p, -mins*60*1000);
+});
+el.customPlus.addEventListener('click', ()=>{
+  const mins=Number(el.customMinutes.value)||0;
+  if(mins<=0) return;
+  const p=getProjectForAdjustment();
+  addCorrection(p, mins*60*1000);
 });
 el.startBtn.addEventListener('click', ()=>{
   const p=el.projectSelect.value || el.newProject.value.trim() || 'General';
@@ -514,6 +676,7 @@ el.resetAll.addEventListener('click', ()=>{
     localStorage.removeItem(ACTIVE_KEY); localStorage.removeItem(DONE_KEY);
     localStorage.removeItem(DAY_ACTIVE_KEY); localStorage.removeItem(DAY_SESS_KEY);
     localStorage.removeItem(LAST_EXPORT_KEY);
+    localStorage.removeItem(CORR_KEY);
     render();
   }
 });
