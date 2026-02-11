@@ -27,18 +27,11 @@
           <button id="stopBtn">Stop</button>
           <button id="resetActiveBtn" class="btn-danger">Reset (this week)</button>
         </div>
-        <div class="row" style="margin-bottom:10px">
-          <span class="muted">Adjust selected project:</span>
-          <select id="adjustStep" title="Adjustment step">
-            <option value="900000">15 min</option>
-            <option value="3600000">1 hour</option>
-            <option value="10800000">3 hours</option>
-          </select>
+        <div class="row adjust-row" style="margin-bottom:10px">
+          <span class="muted adjust-label">Adjust minutes:</span>
+          <input id="adjustMinutes" class="mins-input" type="number" min="1" step="1" placeholder="Minutes" />
           <button id="adjustMinus" class="btn-danger">- Step</button>
           <button id="adjustPlus" class="btn-ok">+ Step</button>
-          <input id="customMinutes" class="mins-input" type="number" min="1" step="1" placeholder="Minutes" />
-          <button id="customMinus" class="btn-danger">- Custom</button>
-          <button id="customPlus" class="btn-ok">+ Custom</button>
         </div>
         <div class="row" style="margin-bottom:10px">
           <button id="exportWeekBtn" class="btn-info">Export week to CSV</button>

@@ -22,8 +22,7 @@ const $=(id)=>document.getElementById(id);
 const el={
   projectSelect:$('projectSelect'), newProject:$('newProject'),
   addProjectBtn:$('addProjectBtn'), renameProjectBtn:$('renameProjectBtn'),
-  adjustStep:$('adjustStep'), adjustMinus:$('adjustMinus'), adjustPlus:$('adjustPlus'),
-  customMinutes:$('customMinutes'), customMinus:$('customMinus'), customPlus:$('customPlus'),
+  adjustMinutes:$('adjustMinutes'), adjustMinus:$('adjustMinus'), adjustPlus:$('adjustPlus'),
   startBtn:$('startBtn'), stopBtn:$('stopBtn'),
   resetActiveBtn:$('resetActiveBtn'), exportWeekBtn:$('exportWeekBtn'),
   projectList:$('projectList'), status:$('status'), weekRange:$('weekRange'),
@@ -528,8 +527,13 @@ function render(){
   const {projects, sessions, active, done} = getData();
 
   // Picker
+  const prevSelection = el.projectSelect.value;
   el.projectSelect.innerHTML = projects.map(p=>`<option value="${p}">${p}</option>`).join('');
-  if(!el.projectSelect.value && projects.length) el.projectSelect.value=projects[0];
+  if(prevSelection && projects.includes(prevSelection)){
+    el.projectSelect.value = prevSelection;
+  } else if(projects.length){
+    el.projectSelect.value=projects[0];
+  }
 
   // Week label
   const weekInfo = isoWeekInfo(startOfWeekMonday());
@@ -638,25 +642,13 @@ el.renameProjectBtn.addEventListener('click', ()=>{
   el.newProject.value='';
 });
 el.adjustMinus.addEventListener('click', ()=>{
-  const step=Number(el.adjustStep.value)||0;
-  if(!step) return;
-  const p=getProjectForAdjustment();
-  addCorrection(p, -step);
-});
-el.adjustPlus.addEventListener('click', ()=>{
-  const step=Number(el.adjustStep.value)||0;
-  if(!step) return;
-  const p=getProjectForAdjustment();
-  addCorrection(p, step);
-});
-el.customMinus.addEventListener('click', ()=>{
-  const mins=Number(el.customMinutes.value)||0;
+  const mins=Number(el.adjustMinutes.value)||0;
   if(mins<=0) return;
   const p=getProjectForAdjustment();
   addCorrection(p, -mins*60*1000);
 });
-el.customPlus.addEventListener('click', ()=>{
-  const mins=Number(el.customMinutes.value)||0;
+el.adjustPlus.addEventListener('click', ()=>{
+  const mins=Number(el.adjustMinutes.value)||0;
   if(mins<=0) return;
   const p=getProjectForAdjustment();
   addCorrection(p, mins*60*1000);
