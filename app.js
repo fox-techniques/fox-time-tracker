@@ -14,9 +14,9 @@ const LAST_OFF_CHECK_KEY='tt.lastOffCheckDay';
 const CORR_KEY='tt.corrections';     // manual corrections [{project,day,deltaMs,at}]
 const DAY_MS=24*60*60*1000;
 const EIGHT_HOURS_MS=8*60*60*1000;
-const BUSINESS_START_HOUR=8;
-const BUSINESS_END_HOUR=18;
-const AFTER_HOURS_IDLE_MS=60*60*1000;
+const BUSINESS_START_HOUR=9;
+const BUSINESS_END_HOUR=19;
+const AFTER_HOURS_IDLE_MS=30*60*1000;
 
 const $=(id)=>document.getElementById(id);
 const el={
