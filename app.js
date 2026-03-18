@@ -6,6 +6,8 @@ const DONE_KEY='tt.done';            // array of done project names
 
 const DAY_ACTIVE_KEY='tt.dayActive'; // day timer active
 const DAY_SESS_KEY='tt.daySessions'; // day sessions [{start,end}]
+const AUTO_CHECKIN_KEY='tt.autoCheckinEnabled';
+const AUTO_CHECKOUT_KEY='tt.autoCheckoutEnabled';
 const LAST_EXPORT_KEY='tt.lastExportWeekStart';
 const LAST_ACTIVITY_KEY='tt.lastActivityMs';
 const LAST_AUTO_CHECKOUT_KEY='tt.lastAutoCheckoutMs';
@@ -18,7 +20,6 @@ const DAY_MS=24*60*60*1000;
 const EIGHT_HOURS_MS=8*60*60*1000;
 const BUSINESS_START_HOUR=9;
 const BUSINESS_END_HOUR=19;
-const AUTO_CHECKIN_ENABLED=true;
 
 const $=(id)=>document.getElementById(id);
 const el={
@@ -31,11 +32,18 @@ const el={
   nowTimer:$('nowTimer'), nowProject:$('nowProject'), todayTotal:$('todayTotal'),
   todayDate:$('todayDate'), weekTotal:$('weekTotal'), resetAll:$('resetAll'),
   bannerText:$('bannerText'),
-  dayTimer:$('dayTimer'), dayInBtn:$('dayInBtn'), dayOutBtn:$('dayOutBtn'), dayStatus:$('dayStatus')
+  dayTimer:$('dayTimer'), dayInBtn:$('dayInBtn'), dayOutBtn:$('dayOutBtn'),
+  autoCheckinBtn:$('autoCheckinBtn'), autoCheckinState:$('autoCheckinState'),
+  autoCheckoutBtn:$('autoCheckoutBtn'), autoCheckoutState:$('autoCheckoutState'),
+  dayStatus:$('dayStatus')
 };
 
 function load(k,d){ try{ return JSON.parse(localStorage.getItem(k)) ?? d }catch{ return d } }
 function save(k,v){ localStorage.setItem(k, JSON.stringify(v)) }
+function loadBool(k,d){
+  const v=load(k,d);
+  return typeof v === 'boolean' ? v : d;
+}
 
 function fmtDuration(ms){
   const safe=Math.max(0, ms);
@@ -90,6 +98,28 @@ function touchActivity(ms){
   if(t - lastActivityCache >= 5000){ save(LAST_ACTIVITY_KEY,t); }
   lastActivityCache=t;
   return t;
+}
+function isAutoCheckinEnabled(){
+  return loadBool(AUTO_CHECKIN_KEY,true);
+}
+function isAutoCheckoutEnabled(){
+  return loadBool(AUTO_CHECKOUT_KEY,true);
+}
+function setAutoCheckinEnabled(enabled){
+  save(AUTO_CHECKIN_KEY, !!enabled);
+}
+function setAutoCheckoutEnabled(enabled){
+  save(AUTO_CHECKOUT_KEY, !!enabled);
+}
+function autoCheckinTooltip(enabled){
+  return enabled
+    ? 'Automatically checks you in when you first interact during work hours.'
+    : 'Automatic day check-in is off. Use Check In or start a project to begin the day.';
+}
+function autoCheckoutTooltip(enabled){
+  return enabled
+    ? 'Automatically checks you out and stops all timers at the end of the workday.'
+    : 'Automatic day check-out is off. You will need to check out manually.';
 }
 function isBusinessHours(ms){
   return ms >= workdayStartMs(ms) && ms < workdayEndMs(ms);
@@ -388,6 +418,7 @@ function getOpenStartMs(){
   return starts.length ? Math.min(...starts) : null;
 }
 function reconcileOpenSessions(now=Date.now()){
+  if(!isAutoCheckoutEnabled()) return false;
   const openStartMs = getOpenStartMs();
   const target = getAutoStopTarget(openStartMs, now);
   if(!target) return false;
@@ -408,7 +439,7 @@ function dayCheckIn({atMs=Date.now(), source='manual', reason='manual'}={}){
 }
 function maybeAutoCheckIn(now=Date.now(), reason='activity'){
   const lastManualDayOutMs = getLastManualDayOutMs();
-  if(!AUTO_CHECKIN_ENABLED || !isBusinessHours(now) || normalizeDayActive()) return false;
+  if(!isAutoCheckinEnabled() || !isBusinessHours(now) || normalizeDayActive()) return false;
   if(lastManualDayOutMs !== null && startOfDay(lastManualDayOutMs) === startOfDay(now)) return false;
   dayCheckIn({atMs: now, source:'auto', reason});
   saveAutoAction('checkin', reason, now, now);
@@ -647,6 +678,18 @@ function render(){
   const dayMs = dayTotalMsNow(dayAct);
   el.dayTimer.textContent = fmtDuration(dayMs);
   el.dayStatus.textContent = buildDayStatus(dayAct);
+  const autoCheckinEnabled = isAutoCheckinEnabled();
+  el.autoCheckinState.textContent = autoCheckinEnabled ? 'On' : 'Off';
+  el.autoCheckinBtn.classList.toggle('is-on', autoCheckinEnabled);
+  el.autoCheckinBtn.classList.toggle('is-off', !autoCheckinEnabled);
+  el.autoCheckinBtn.setAttribute('aria-checked', String(autoCheckinEnabled));
+  el.autoCheckinBtn.setAttribute('data-tooltip', autoCheckinTooltip(autoCheckinEnabled));
+  const autoCheckoutEnabled = isAutoCheckoutEnabled();
+  el.autoCheckoutState.textContent = autoCheckoutEnabled ? 'On' : 'Off';
+  el.autoCheckoutBtn.classList.toggle('is-on', autoCheckoutEnabled);
+  el.autoCheckoutBtn.classList.toggle('is-off', !autoCheckoutEnabled);
+  el.autoCheckoutBtn.setAttribute('aria-checked', String(autoCheckoutEnabled));
+  el.autoCheckoutBtn.setAttribute('data-tooltip', autoCheckoutTooltip(autoCheckoutEnabled));
 
   // Banner HTML (colored per project)
   el.bannerText.innerHTML = buildBannerHTML();
@@ -718,6 +761,7 @@ el.resetAll.addEventListener('click', ()=>{
     localStorage.removeItem(SESS_KEY); localStorage.removeItem(PROJ_KEY);
     localStorage.removeItem(ACTIVE_KEY); localStorage.removeItem(DONE_KEY);
     localStorage.removeItem(DAY_ACTIVE_KEY); localStorage.removeItem(DAY_SESS_KEY);
+    localStorage.removeItem(AUTO_CHECKIN_KEY); localStorage.removeItem(AUTO_CHECKOUT_KEY);
     localStorage.removeItem(LAST_EXPORT_KEY); localStorage.removeItem(LAST_ACTIVITY_KEY);
     localStorage.removeItem(LAST_AUTO_CHECKOUT_KEY); localStorage.removeItem(LAST_AUTO_ACTION_KEY);
     localStorage.removeItem(LAST_MANUAL_DAY_OUT_KEY);
@@ -739,6 +783,16 @@ el.projectList.addEventListener('click',(e)=>{
 });
 el.dayInBtn.addEventListener('click', ()=>dayCheckIn());
 el.dayOutBtn.addEventListener('click', ()=>dayCheckOut());
+el.autoCheckinBtn.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  setAutoCheckinEnabled(!isAutoCheckinEnabled());
+  render();
+});
+el.autoCheckoutBtn.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  setAutoCheckoutEnabled(!isAutoCheckoutEnabled());
+  render();
+});
 
 /* Activity tracking */
 function handleWorkActivity(reason='activity'){

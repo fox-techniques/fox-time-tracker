@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title> FOX Time Tracker </title>
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -66,6 +67,24 @@
           <div class="day-controls">
             <button id="dayInBtn" class="btn-day-in">Check In</button>
             <button id="dayOutBtn" class="btn-day-out">Check Out</button>
+            <button id="autoCheckinBtn" class="switch-toggle" type="button" role="switch" aria-checked="true" data-tooltip="Automatically checks you in when you first interact during work hours.">
+              <span class="switch-copy">
+                <span class="switch-label">Auto Check In</span>
+                <span class="switch-state" id="autoCheckinState">On</span>
+              </span>
+              <span class="switch-track" aria-hidden="true">
+                <span class="switch-thumb"></span>
+              </span>
+            </button>
+            <button id="autoCheckoutBtn" class="switch-toggle" type="button" role="switch" aria-checked="true" data-tooltip="Automatically checks you out and stops all timers at the end of the workday.">
+              <span class="switch-copy">
+                <span class="switch-label">Auto Check Out</span>
+                <span class="switch-state" id="autoCheckoutState">On</span>
+              </span>
+              <span class="switch-track" aria-hidden="true">
+                <span class="switch-thumb"></span>
+              </span>
+            </button>
             <span class="muted" id="dayStatus">Not checked in</span>
           </div>
         </div>
