@@ -18,6 +18,8 @@
   - **stopped (red):** `ProjectName 00:00:00 | <total>`
   - Items are separated by a **◆** diamond
 - **Day timer** with **Check In / Check Out** + live counter
+- **Auto Check In** on first interaction during configured work hours
+- **Auto Check Out** at configured day end, with stale-session recovery on next load/focus
 - **Zero setup** — open `index.html` in a browser
 - **Offline & private** — all data stays in your browser `localStorage`
 
@@ -39,7 +41,10 @@
 ### Day timer
 
 - Use **Check In / Check Out** to track your overall day.
-- The day counter is independent from project sessions.
+- **Check In** only starts the day timer. It does not auto-start a project.
+- Starting a project will auto-check in the day if needed.
+- If you leave the app running past the configured day end, it will auto-check out the day and stop the active project.
+- If the laptop sleeps or restarts, stale sessions are reconciled the next time the page is loaded or focused.
 
 ### Export
 
@@ -65,8 +70,11 @@ Tweak CSS variables at the top (e.g., `--bg`, `--panel`, `--banner-h`).
 Open `app.js`:
 
 - Week start (Monday): Change `startOfWeekMonday()` if you prefer Sunday weeks.
+- Auto work window: change `BUSINESS_START_HOUR` / `BUSINESS_END_HOUR`.
 
 - Diamond separator: In `buildBannerHTML()` you can replace ◆ with anything you like.
+
+Note: because this is a browser page, it cannot run while your laptop is asleep or powered off. Auto check-out after sleep/restart is applied when the page is opened again or regains focus.
 
 ## 🔐 Data & privacy
 
@@ -78,6 +86,9 @@ All data is stored locally in your browser via *localStorage*:
 - `tt.done` — array of done project names
 - `tt.dayActive` / `tt.daySessions` — day timer
 - `tt.lastExportWeekStart` — last auto-export checkpoint
+- `tt.lastActivityMs` — last page activity seen by the tracker
+- `tt.lastAutoCheckoutMs` / `tt.lastAutoAction` — auto check-in/out metadata
+- `tt.lastManualDayOutMs` — prevents same-day auto check-in after a manual check-out
 
 Use **“Reset all data”** (bottom of the right panel) to clear everything.
 

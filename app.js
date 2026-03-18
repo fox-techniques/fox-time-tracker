@@ -9,6 +9,8 @@ const DAY_SESS_KEY='tt.daySessions'; // day sessions [{start,end}]
 const LAST_EXPORT_KEY='tt.lastExportWeekStart';
 const LAST_ACTIVITY_KEY='tt.lastActivityMs';
 const LAST_AUTO_CHECKOUT_KEY='tt.lastAutoCheckoutMs';
+const LAST_AUTO_ACTION_KEY='tt.lastAutoAction';
+const LAST_MANUAL_DAY_OUT_KEY='tt.lastManualDayOutMs';
 const OFF_DAYS_KEY='tt.offDays';
 const LAST_OFF_CHECK_KEY='tt.lastOffCheckDay';
 const CORR_KEY='tt.corrections';     // manual corrections [{project,day,deltaMs,at}]
@@ -16,7 +18,7 @@ const DAY_MS=24*60*60*1000;
 const EIGHT_HOURS_MS=8*60*60*1000;
 const BUSINESS_START_HOUR=9;
 const BUSINESS_END_HOUR=19;
-const AFTER_HOURS_IDLE_MS=30*60*1000;
+const AUTO_CHECKIN_ENABLED=true;
 
 const $=(id)=>document.getElementById(id);
 const el={
@@ -50,6 +52,7 @@ function fmtSignedDuration(ms){
 function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
 function startOfDay(ms){ const d=new Date(ms); d.setHours(0,0,0,0); return d.getTime(); }
 function endOfToday(){ const d=new Date(); d.setHours(23,59,59,999); return d.getTime(); }
+function endOfDay(ms){ return startOfDay(ms) + DAY_MS - 1; }
 function startOfWeekMonday(){ const d=new Date(); const day=(d.getDay()+6)%7; d.setHours(0,0,0,0); d.setDate(d.getDate()-day); return d.getTime(); }
 function endOfWeekMonday(){ const s=startOfWeekMonday(); return s + 7*24*3600*1000 - 1; }
 function formatDateRange(ms1,ms2){
@@ -89,8 +92,41 @@ function touchActivity(ms){
   return t;
 }
 function isBusinessHours(ms){
-  const h=new Date(ms).getHours();
-  return h>=BUSINESS_START_HOUR && h<BUSINESS_END_HOUR;
+  return ms >= workdayStartMs(ms) && ms < workdayEndMs(ms);
+}
+function workdayStartMs(ms){
+  return startOfDay(ms) + BUSINESS_START_HOUR*60*60*1000;
+}
+function workdayEndMs(ms){
+  return startOfDay(ms) + BUSINESS_END_HOUR*60*60*1000;
+}
+function autoCheckoutDeadlineMs(startMs){
+  const workEnd = workdayEndMs(startMs);
+  return startMs < workEnd ? workEnd : endOfDay(startMs);
+}
+function getAutoStopTarget(startMs, now=Date.now()){
+  if(typeof startMs !== 'number' || Number.isNaN(startMs)) return null;
+  const deadline = autoCheckoutDeadlineMs(startMs);
+  if(now < deadline) return null;
+  return {
+    effectiveAt: deadline,
+    reason: startOfDay(startMs) < startOfDay(now) ? 'previous-day' : 'workday-end'
+  };
+}
+function getLastAutoAction(){
+  const action = load(LAST_AUTO_ACTION_KEY,null);
+  if(!action || typeof action.type!=='string' || typeof action.effectiveAt!=='number') return null;
+  return action;
+}
+function saveAutoAction(type, reason, effectiveAt, recordedAt=Date.now()){
+  save(LAST_AUTO_ACTION_KEY,{type, reason, effectiveAt, recordedAt});
+}
+function clearAutoAction(){
+  localStorage.removeItem(LAST_AUTO_ACTION_KEY);
+}
+function getLastManualDayOutMs(){
+  const v=load(LAST_MANUAL_DAY_OUT_KEY,null);
+  return (typeof v==='number' && !Number.isNaN(v)) ? v : null;
 }
 function markDayOffIfNoSessions(dayStart){
   const arr = load(DAY_SESS_KEY,[]);
@@ -206,7 +242,7 @@ function renameProject(oldName,newName){
 function startTimer(project){
   const d=getData();
   if(d.active){ if(d.active.project===project) return; stopTimer(); }
-  if(!load(DAY_ACTIVE_KEY,null)) dayCheckIn({skipAutoProjectStart:true}); // auto check-in if not already
+  if(!normalizeDayActive()) dayCheckIn({atMs:Date.now(), source:'auto', reason:'project-start'});
   ensureProject(project);
   touchActivity();
   setActive({project, startEpochMs:Date.now()}); render();
@@ -222,16 +258,19 @@ function stopActiveAt(endMs,{skipRender=false}={}){
   setActive(null);
   if(!skipRender) render();
 }
+function stopDayAt(endMs,{skipRender=false}={}){
+  const dayActive = normalizeDayActive();
+  if(!dayActive) return;
+  const safeEnd=Math.max(endMs, dayActive.startEpochMs);
+  const arr = load(DAY_SESS_KEY,[]);
+  arr.push({start: dayActive.startEpochMs, end: safeEnd});
+  save(DAY_SESS_KEY, arr);
+  localStorage.removeItem(DAY_ACTIVE_KEY);
+  if(!skipRender) render();
+}
 function stopAllAt(endMs){
   stopActiveAt(endMs,{skipRender:true});
-  const dayActive = normalizeDayActive();
-  if(dayActive){
-    const safeEnd=Math.max(endMs, dayActive.startEpochMs);
-    const arr = load(DAY_SESS_KEY,[]);
-    arr.push({start: dayActive.startEpochMs, end: safeEnd});
-    save(DAY_SESS_KEY, arr);
-    localStorage.removeItem(DAY_ACTIVE_KEY);
-  }
+  stopDayAt(endMs,{skipRender:true});
   render();
 }
 function markDone(project){
@@ -334,40 +373,54 @@ function dailyProjectTotalsWithOvertime(segments, corrections=[]){
 /* ========= Day timer helpers ========= */
 function normalizeDayActive(){
   const dayActive = load(DAY_ACTIVE_KEY,null);
-  const todayStart = startOfToday();
-  if(!dayActive || typeof dayActive.startEpochMs !== 'number') return null;
-  if(dayActive.startEpochMs < todayStart){
-    const arr = load(DAY_SESS_KEY,[]);
-    arr.push({start: dayActive.startEpochMs, end: todayStart - 1});
-    save(DAY_SESS_KEY, arr);
-    const updated = {startEpochMs: todayStart};
-    save(DAY_ACTIVE_KEY, updated);
-    return updated;
+  if(!dayActive || typeof dayActive.startEpochMs !== 'number'){
+    localStorage.removeItem(DAY_ACTIVE_KEY);
+    return null;
   }
   return dayActive;
 }
-function dayCheckIn({skipAutoProjectStart=false}={}){
+function getOpenStartMs(){
   const dayActive = normalizeDayActive();
-  if(dayActive){
-    if(!skipAutoProjectStart && !load(ACTIVE_KEY,null)){
-      ensureProject('General');
-      startTimer('General');
-    }
-    return dayActive;
-  }
-  const now = Date.now();
-  save(DAY_ACTIVE_KEY,{startEpochMs: now});
-  touchActivity(now);
-  if(!skipAutoProjectStart && !load(ACTIVE_KEY,null)){
-    ensureProject('General');
-    startTimer('General');
-    return;
-  }
-  render();
+  const active = load(ACTIVE_KEY,null);
+  const starts = [];
+  if(dayActive?.startEpochMs) starts.push(dayActive.startEpochMs);
+  if(active?.startEpochMs) starts.push(active.startEpochMs);
+  return starts.length ? Math.min(...starts) : null;
 }
-function dayCheckOut(endOverrideMs){
+function reconcileOpenSessions(now=Date.now()){
+  const openStartMs = getOpenStartMs();
+  const target = getAutoStopTarget(openStartMs, now);
+  if(!target) return false;
+  stopAllAt(target.effectiveAt);
+  save(LAST_AUTO_CHECKOUT_KEY, target.effectiveAt);
+  saveAutoAction('checkout', target.reason, target.effectiveAt, now);
+  return true;
+}
+function dayCheckIn({atMs=Date.now(), source='manual', reason='manual'}={}){
+  const dayActive = normalizeDayActive();
+  if(dayActive) return dayActive;
+  save(DAY_ACTIVE_KEY,{startEpochMs: atMs, source, reason});
+  localStorage.removeItem(LAST_MANUAL_DAY_OUT_KEY);
+  touchActivity(atMs);
+  if(source!=='auto') clearAutoAction();
+  render();
+  return normalizeDayActive();
+}
+function maybeAutoCheckIn(now=Date.now(), reason='activity'){
+  const lastManualDayOutMs = getLastManualDayOutMs();
+  if(!AUTO_CHECKIN_ENABLED || !isBusinessHours(now) || normalizeDayActive()) return false;
+  if(lastManualDayOutMs !== null && startOfDay(lastManualDayOutMs) === startOfDay(now)) return false;
+  dayCheckIn({atMs: now, source:'auto', reason});
+  saveAutoAction('checkin', reason, now, now);
+  return true;
+}
+function dayCheckOut(endOverrideMs, source='manual'){
   const endMs = typeof endOverrideMs==='number' ? endOverrideMs : Date.now();
   stopAllAt(endMs);
+  if(source === 'manual'){
+    save(LAST_MANUAL_DAY_OUT_KEY,endMs);
+    clearAutoAction();
+  }
   touchActivity(endMs);
 }
 function daySessionsToday(){
@@ -389,19 +442,17 @@ function dayTotalMsNow(activeOverride){
   }
   return ms;
 }
-function maybeAfterHoursAutoCheckout(){
-  const dayActive = normalizeDayActive();
-  const active = load(ACTIVE_KEY,null);
-  if(!dayActive && !active) return; // nothing running
-  const now = Date.now();
-  if(isBusinessHours(now)) return;
-  const lastAct = getLastActivityMs();
-  if(now - lastAct < AFTER_HOURS_IDLE_MS) return;
-  const lastAuto = load(LAST_AUTO_CHECKOUT_KEY,null);
-  if(lastAuto && startOfDay(lastAuto) === startOfDay(now)) return; // already handled today
-  const cutoff = Math.max(lastAct, dayActive?.startEpochMs ?? 0, active?.startEpochMs ?? 0);
-  stopAllAt(cutoff);
-  save(LAST_AUTO_CHECKOUT_KEY, now);
+function buildDayStatus(dayAct){
+  if(dayAct){
+    return dayAct.source === 'auto'
+      ? `Checked in automatically at ${formatTime(dayAct.startEpochMs)}`
+      : 'Checked in';
+  }
+  const action = getLastAutoAction();
+  if(action?.type === 'checkout' && startOfDay(action.effectiveAt) === startOfToday()){
+    return `Auto checked out at ${formatTime(action.effectiveAt)}`;
+  }
+  return 'Not checked in';
 }
 
 /* ========= Export ========= */
@@ -595,7 +646,7 @@ function render(){
   const dayAct = normalizeDayActive();
   const dayMs = dayTotalMsNow(dayAct);
   el.dayTimer.textContent = fmtDuration(dayMs);
-  el.dayStatus.textContent = dayAct ? 'Checked in' : 'Not checked in';
+  el.dayStatus.textContent = buildDayStatus(dayAct);
 
   // Banner HTML (colored per project)
   el.bannerText.innerHTML = buildBannerHTML();
@@ -667,7 +718,10 @@ el.resetAll.addEventListener('click', ()=>{
     localStorage.removeItem(SESS_KEY); localStorage.removeItem(PROJ_KEY);
     localStorage.removeItem(ACTIVE_KEY); localStorage.removeItem(DONE_KEY);
     localStorage.removeItem(DAY_ACTIVE_KEY); localStorage.removeItem(DAY_SESS_KEY);
-    localStorage.removeItem(LAST_EXPORT_KEY);
+    localStorage.removeItem(LAST_EXPORT_KEY); localStorage.removeItem(LAST_ACTIVITY_KEY);
+    localStorage.removeItem(LAST_AUTO_CHECKOUT_KEY); localStorage.removeItem(LAST_AUTO_ACTION_KEY);
+    localStorage.removeItem(LAST_MANUAL_DAY_OUT_KEY);
+    localStorage.removeItem(OFF_DAYS_KEY); localStorage.removeItem(LAST_OFF_CHECK_KEY);
     localStorage.removeItem(CORR_KEY);
     render();
   }
@@ -683,25 +737,37 @@ el.projectList.addEventListener('click',(e)=>{
     if(confirm(`Reset THIS WEEK for "${p}"?`)) resetProjectWeek(p);
   }
 });
-el.dayInBtn.addEventListener('click', dayCheckIn);
-el.dayOutBtn.addEventListener('click', dayCheckOut);
+el.dayInBtn.addEventListener('click', ()=>dayCheckIn());
+el.dayOutBtn.addEventListener('click', ()=>dayCheckOut());
 
 /* Activity tracking */
+function handleWorkActivity(reason='activity'){
+  const now = Date.now();
+  maybeAutoCheckIn(now, reason);
+  touchActivity(now);
+}
+function handleResume(reason='resume'){
+  const now = Date.now();
+  reconcileOpenSessions(now);
+  maybeAutoCheckIn(now, reason);
+  touchActivity(now);
+}
 ['mousemove','keydown','click'].forEach(evt=>{
-  document.addEventListener(evt, ()=>touchActivity());
+  document.addEventListener(evt, ()=>handleWorkActivity(evt));
 });
 document.addEventListener('visibilitychange', ()=>{
-  if(!document.hidden) touchActivity();
+  if(!document.hidden) handleResume('visibility');
 });
-window.addEventListener('focus', ()=>touchActivity());
+window.addEventListener('focus', ()=>handleResume('focus'));
 touchActivity(getLastActivityMs()); // seed cached activity
 maybeMarkPreviousDayOff();
 
 /* Auto-export weekly rollover */
 setInterval(maybeAutoExport, 60*1000);
-setInterval(maybeAfterHoursAutoCheckout, 60*1000);
+setInterval(()=>reconcileOpenSessions(Date.now()), 60*1000);
 setInterval(maybeMarkPreviousDayOff, 60*60*1000);
 maybeAutoExport();
 
 /* Initial render */
+if(!document.hidden && document.hasFocus()) handleResume('load');
 render();
