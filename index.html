@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title> FOX Time Tracker </title>
-  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link rel="icon" type="image/png" href="favicon.png?v=20260325" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -17,22 +17,28 @@
     <div class="grid">
       <!-- Controls / Projects -->
       <div class="card">
-        <div class="row" style="margin-bottom:10px">
-          <select id="projectSelect" title="Choose project"></select>
-          <input id="newProject" placeholder="New project name…" />
-          <button class="btn-primary" id="addProjectBtn">Add / Select</button>
-          <button class="btn-info" id="renameProjectBtn" title="Rename selected project">Rename</button>
+        <div class="row project-controls" style="margin-bottom:10px">
+          <select id="projectSelect" class="project-select" title="Choose project"></select>
+          <input id="newProject" class="project-name-input" placeholder="New project name…" />
         </div>
-        <div class="row" style="margin-bottom:10px">
-          <button id="startBtn" class="btn-ok">Start</button>
-          <button id="stopBtn">Stop</button>
-          <button id="resetActiveBtn" class="btn-danger">Reset (this week)</button>
+        <div class="row project-button-row" style="margin-bottom:10px">
+          <div class="row timer-actions">
+            <button id="startBtn" class="btn-ok">Start</button>
+            <button id="stopBtn">Stop</button>
+            <button id="resetActiveBtn" class="btn-danger">Reset (this week)</button>
+          </div>
+          <div class="row project-actions">
+            <button class="btn-primary" id="addProjectBtn">Add / Select</button>
+            <button class="btn-info" id="renameProjectBtn" title="Rename selected project">Rename</button>
+          </div>
         </div>
         <div class="row adjust-row" style="margin-bottom:10px">
           <span class="muted adjust-label">Adjust minutes:</span>
           <input id="adjustMinutes" class="mins-input" type="number" min="1" step="1" placeholder="Minutes" />
-          <button id="adjustMinus" class="btn-danger">- Step</button>
-          <button id="adjustPlus" class="btn-ok">+ Step</button>
+          <div class="row adjust-actions">
+            <button id="adjustMinus" class="btn-danger">- Step</button>
+            <button id="adjustPlus" class="btn-ok">+ Step</button>
+          </div>
         </div>
         <div class="row" style="margin-bottom:10px">
           <button id="exportWeekBtn" class="btn-info">Export week to CSV</button>
